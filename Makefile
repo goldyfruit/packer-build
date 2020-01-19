@@ -9,7 +9,6 @@ PACKER_CACHE_DIR ?= packer_cache
 PYTHON ?= python3
 TEMPLATE ?= base-uefi
 TEMPLATE_DIR ?= template
-VENV_DIR ?= .venv
 
 .SUFFIXES:
 .SUFFIXES: .yaml .json .iso .preseed .vagrant .ova .box
@@ -19,31 +18,27 @@ VENV_DIR ?= .venv
 .PHONY: all
 all:
 
-ACTIVATE_SCRIPT = $(VENV_DIR)/bin/activate
-.PHONY: venv
-venv: $(ACTIVATE_SCRIPT)
-$(ACTIVATE_SCRIPT): requirements.txt
-	@test -d $(VENV_DIR) || $(PYTHON) -m venv $(VENV_DIR) && \
-  source $(ACTIVATE_SCRIPT) && \
-  pip install --upgrade --requirement requirements.txt && \
-  touch $(ACTIVATE_SCRIPT)
-
-.PHONY: venv_upgrade
-venv_upgrade: venv
-	@source $(ACTIVATE_SCRIPT) && \
-  pip install --upgrade --requirement requirements_bare.txt && \
-  pip freeze > requirements.txt && \
-  touch $(ACTIVATE_SCRIPT)
+.PHONY: generator builder
+generator: Dockerfile
+	@docker build \
+    --file Dockerfile \
+    --tag $@ \
+    --target $@ \
+    .
 
 # Don't depend on source files, always regenerate templates!!!
-$(TEMPLATE_DIR): venv
-	@source $(ACTIVATE_SCRIPT) && \
-  $(error $(OS_NAME) $(OS_VERSION) $(TEMPLATE))
+$(TEMPLATE_DIR): generator
+	@docker run \
+    --interactive \
+    --rm \
+    --tty \
+    --volume $(PWD)/$(SOURCE_DIR):/tmp/$(SOURCE_DIR) \
+    --volume $(PWD)/$(TEMPLATE_DIR):/tmp/$(TEMPLATE_DIR) \
+    generator
 
 .PHONY: build
 build: $(TEMPLATE_DIR)
-	@source $(ACTIVATE_SCRIPT) && \
-  CHECKPOINT_DISABLE=1 PACKER_CACHE_DIR=$(PACKER_CACHE_DIR) \
+	@CHECKPOINT_DISABLE=1 PACKER_CACHE_DIR=$(PACKER_CACHE_DIR) \
   packer build $(BUILD_OPTS) -only=$(BUILDER) -force $(TEMPLATE_DIR)/$(OS_NAME)/$(OS_VERSION)/$(TEMPLATE).json
 
 # PACKER_CACHE_DIR=packer_cache
@@ -64,7 +59,3 @@ clean:
 .PHONY: reallyclean
 reallyclean: clean
 	@rm -rf $(PACKER_CACHE_DIR)
-
-.PHONY: reallyreallyclean
-reallyreallyclean: reallyclean
-	@rm -rf $(VENV_DIR)
